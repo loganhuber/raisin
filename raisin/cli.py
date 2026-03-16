@@ -10,6 +10,7 @@ from platformdirs import user_config_dir
 # TODO
 # create black and white flag
 
+
 CONFIG_PATH = Path(user_config_dir('raisin')) / '.config.json'
 
 DEFAULTS = {
@@ -27,11 +28,20 @@ def load_config():
     
         with open(CONFIG_PATH) as f:
             return {**DEFAULTS, **json.load(f)}
+        
+def save_config(config):
+    with open(CONFIG_PATH, "w") as f:
+        json.dump(config, f, indent=2)
  
 
-def get_defaults(key):
-    defaults = load_config()
-    return defaults[key]
+# def get_defaults(key):
+#     defaults = load_config()
+#     return defaults[key]
+
+@click.group()
+@click.pass_context
+def cli(ctx):
+    ctx.default_map = load_config()
 
 
 @click.command()
@@ -39,7 +49,9 @@ def get_defaults(key):
 @click.option('--show', '-s', is_flag=True, help="Displays the image you input. This only accepts a single file")
 @click.option('--compress', '-c', is_flag=True, help="Compresses file and converts to a .WebP file unless another file type is specified with the -f flag.\nTo adjust the amount of compression, use the -q flag and specify a number between 10 and 95")
 @click.option('--quality', '-q', type=click.IntRange(10, 95), help="Quality of compression. Accepts values 10 through 95")
+@click.option('--resize', '-rs', type=click.IntRange(100, 2000), help="Resize the image")
 @click.option('--format', '-f', help=f"This is the file type you wish to convert to.")
+@click.option('--grayscale', '-g', is_flag=True, help="Converts image to black and white.")
 @click.option('--recursive', '-r', is_flag=True, help="Use to convert all image files within a directory")
 @click.option('--default', '-d', is_flag=True, help="Change default values")
 # @click.option('--grey', '-bw', is_flag=True, help="Creates a black and white copy of the image")
@@ -48,7 +60,7 @@ def get_defaults(key):
 # OR image can be converted with img = image.convert("1") for strict black and white
 # ///////////////////////////////////////////////////////////////////////////
 
-def main(path, show, compress, quality, format, recursive, default):
+def main(path, show, compress, quality, resize, format, grayscale, recursive, default):
     """Raisin is a CLI Tool meant to easily compress and convert image files."""
 
     config = load_config()
@@ -59,6 +71,9 @@ def main(path, show, compress, quality, format, recursive, default):
     if format is None:
         format = config["format"]
 
+    if default and path:
+        click.secho("Error: -d flag can't be used with path", fg='red')
+        return
 
     if not path:
         if default:
@@ -75,7 +90,7 @@ def main(path, show, compress, quality, format, recursive, default):
     path = Path(path)
 
     if path.is_file():
-        convert_file(path, show, compress, quality, format)
+        convert_file(path, show, compress, quality, resize, format, grayscale)
         click.echo("Done")
 
     if path.is_dir():
@@ -95,14 +110,14 @@ def main(path, show, compress, quality, format, recursive, default):
                 continue
 
             if file.is_file() and is_valid_format(file.suffix):
-                convert_file(file, show, compress, quality, format, output_folder)
+                convert_file(file, show, compress, quality, format, resize, grayscale, output_folder)
                 
             else:
                 click.secho(f'{file.stem} was skipped because it is not an image file', fg='yellow')
         click.echo("Done")
 
 
-def convert_file(file, show, compress, quality, format, output_folder=None):
+def convert_file(file, show, compress, quality, resize, format, grayscale, output_folder=None):
     messages = []
     if show:
         show_image(file)
@@ -115,30 +130,58 @@ def convert_file(file, show, compress, quality, format, output_folder=None):
     else:
         output_folder = file.parent
 
-    if not compress:
-        quality = 100
+    opperations = []
 
     filename = Path(file).stem
     img = Image.open(file)
-    new_file = output_folder / f'{filename}_small.{format}'
-    img.save(new_file, quality=quality, format=format)
+
+    save_args = {}
+
+    if compress:
+        opperations.append(('compress', lambda img: compress_img(img, quality)))
+
+    if resize:
+        opperations.append(('resize', lambda img: resize_img(img, resize)))
+
+    if grayscale:
+        opperations.append(('grayscale', lambda img: black_and_white(img)))
+
+    suffix = get_suffixes(compress, resize, grayscale)
+
+    new_file = output_folder / f'{filename}_{suffix}.{format}'
+
+    for name, op in opperations:
+        img, args = op(img)
+        save_args.update(args)
+
+    img.save(new_file, format=format, **save_args)
+
     size_info = get_size_info(file, new_file)
     messages.append((f"Saved {new_file}", 'yellow'))
     messages.append((size_info, 'green'))
 
     
-
     for message in messages:
         msg, color = message
         click.secho(msg, fg=color)
     
 
+# ----------CONVERSIONS---------------
 
+def compress_img(img, quality):
+    return img, {"quality" : quality}
 
+def resize_img(img, width):
+    w, h = img.size
+    ratio = width / w
+    new_height = int(h * ratio)
+    return img.resize((width, new_height)), {}
 
-def save_config(config):
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(config, f, indent=2)
+def black_and_white(img):
+    return img.convert("L"), {}
+
+# ---------END CONVERSIONS------------
+
 
 
 def update_defaults(quality, format):
@@ -157,13 +200,13 @@ def update_defaults(quality, format):
     if defaults['quality'] != quality:
         old = defaults['quality']
         defaults['quality'] = quality
-        msg = f"Quality updated {old} -> {quality}"
+        msg = f"Quality updated ({old} -> {quality})"
         altered_msgs.append(msg)
 
     if defaults['format'] != format:
         old = defaults['format']
         defaults['format'] = format
-        msg = f"Format updated {old} -> {format}"
+        msg = f"Format updated ({old} -> {format})"
         altered_msgs.append(msg)
     
 
@@ -196,6 +239,14 @@ def get_size_info(old_file, new_file):
 
     return f'{old_size//1024}KB -> {new_size//1024}KB ({change}: {percent:.0%})'
 
+def get_suffixes(compress, resize, grayscale):
+    suffixes = []
+    if compress or resize:
+        suffixes.append('small')
+    if grayscale:
+        suffixes.append('bw')
+
+    return '_'.join(suffixes)
 
 # Pillow's native show function was causing running
 # into errors when used outside the project directory
@@ -216,4 +267,4 @@ def show_image(file):
 
 
 if __name__=='__main__':
-    main()
+    cli()

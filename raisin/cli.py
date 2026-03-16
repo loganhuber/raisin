@@ -7,8 +7,6 @@ import platform
 import json
 from platformdirs import user_config_dir
 
-# TODO
-# create black and white flag
 
 
 CONFIG_PATH = Path(user_config_dir('raisin')) / '.config.json'
@@ -34,10 +32,6 @@ def save_config(config):
         json.dump(config, f, indent=2)
  
 
-# def get_defaults(key):
-#     defaults = load_config()
-#     return defaults[key]
-
 @click.group()
 @click.pass_context
 def cli(ctx):
@@ -54,11 +48,7 @@ def cli(ctx):
 @click.option('--grayscale', '-g', is_flag=True, help="Converts image to black and white.")
 @click.option('--recursive', '-r', is_flag=True, help="Use to convert all image files within a directory")
 @click.option('--default', '-d', is_flag=True, help="Change default values")
-# @click.option('--grey', '-bw', is_flag=True, help="Creates a black and white copy of the image")
-# TODO make black and white functionality
-# image can be converted with img = image.convert("L") for greyscale with 256 shades
-# OR image can be converted with img = image.convert("1") for strict black and white
-# ///////////////////////////////////////////////////////////////////////////
+
 
 def main(path, show, compress, quality, resize, format, grayscale, recursive, default):
     """Raisin is a CLI Tool meant to easily compress and convert image files."""
@@ -89,11 +79,11 @@ def main(path, show, compress, quality, resize, format, grayscale, recursive, de
     
     path = Path(path)
 
-    if path.is_file():
+    if path.is_file(): # converts one file
         convert_file(path, show, compress, quality, resize, format, grayscale)
         click.echo("Done")
 
-    if path.is_dir():
+    if path.is_dir(): # converts each file in a folder
         if not recursive:
             click.secho("Error \nDirectory entered. Use '-r' flag to iterate through a folder", fg='red')
             return 
@@ -185,7 +175,6 @@ def black_and_white(img):
 
 
 def update_defaults(quality, format):
-    
     if not is_valid_format(format):
         click.secho(f"Error: '{format}' is not a valid format", fg='red')
         return
@@ -227,6 +216,8 @@ def is_valid_format(format):
         return False
     
 
+# --------USER INFO FOR NEW FILE--------
+
 # returns a string to display percentage saved in compression
 def get_size_info(old_file, new_file):
     old_size = old_file.stat().st_size
@@ -239,6 +230,7 @@ def get_size_info(old_file, new_file):
 
     return f'{old_size//1024}KB -> {new_size//1024}KB ({change}: {percent:.0%})'
 
+# returns all the suffixes for the filename
 def get_suffixes(compress, resize, grayscale):
     suffixes = []
     if compress or resize:
@@ -247,10 +239,11 @@ def get_suffixes(compress, resize, grayscale):
         suffixes.append('bw')
 
     return '_'.join(suffixes)
+# ///////////////////////////////////////////////
+
 
 # Pillow's native show function was causing running
 # into errors when used outside the project directory
-
 def show_image(file):
     system = platform.system()
 
@@ -263,6 +256,7 @@ def show_image(file):
             subprocess.run(["xdg-open", str(file)])
     except Exception as e:
         click.secho(f"Error showing image: {e}")
+
 
 
 

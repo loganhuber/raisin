@@ -1,5 +1,5 @@
 import click 
-from PIL import Image
+from PIL import Image, ImageFilter
 from pathlib import Path
 import re
 import subprocess
@@ -45,12 +45,13 @@ def cli(ctx):
 @click.option('--compress', '-c', is_flag=True, help="Compresses file and converts to a .WebP file unless another file type is specified with the -f flag.\nTo adjust the amount of compression, use the -q flag and specify a number between 10 and 95")
 @click.option('--quality', '-q', type=click.IntRange(10, 95), help="Quality of compression. Accepts values 10 through 95")
 @click.option('--resize', '-rs', type=click.IntRange(100, 2000), help="Resize the image")
+@click.option('--blur', '-b', is_flag=True, help="Blurs image")
 @click.option('--format', '-f', help=f"This is the file type you wish to convert to.")
 @click.option('--grayscale', '-g', is_flag=True, help="Converts image to black and white.")
 @click.option('--default', '-d', is_flag=True, help="Change default values")
 
 
-def main(path, show, compress, quality, resize, format, grayscale, recursive, default):
+def main(path, show, compress, quality, resize, blur, format, grayscale, recursive, default):
     """Raisin is a CLI Tool meant to easily compress and convert image files."""
 
     config = load_config()
@@ -80,7 +81,7 @@ def main(path, show, compress, quality, resize, format, grayscale, recursive, de
     path = Path(path)
 
     if path.is_file(): # converts one file
-        convert_file(path, show, compress, quality, resize, format, grayscale)
+        convert_file(path, show, compress, quality, resize, blur, format, grayscale)
         click.echo("Done")
 
     if path.is_dir(): # converts each file in a folder
@@ -100,14 +101,14 @@ def main(path, show, compress, quality, resize, format, grayscale, recursive, de
                 continue
 
             if file.is_file() and is_valid_format(file.suffix):
-                convert_file(file, show, compress, quality, resize, format, grayscale, output_folder)
+                convert_file(file, show, compress, quality, resize, blur, format, grayscale, output_folder)
                 
             else:
                 click.secho(f'{file.stem} was skipped because it is not an image file', fg='yellow')
         click.echo("Done")
 
 
-def convert_file(file, show, compress, quality, resize, format, grayscale, output_folder=None):
+def convert_file(file, show, compress, quality, resize, blur, format, grayscale, output_folder=None):
     messages = []
     if show:
         show_image(file)
@@ -136,7 +137,10 @@ def convert_file(file, show, compress, quality, resize, format, grayscale, outpu
     if grayscale:
         opperations.append(('grayscale', lambda img: black_and_white(img)))
 
-    suffix = get_suffixes(compress, resize, grayscale)
+    if blur:
+        opperations.append(('blur', lambda img: blur_img(img)))
+
+    suffix = get_suffixes(compress, resize, grayscale, blur)
 
     new_file = output_folder / f'{filename}_{suffix}.{format}'
 
@@ -170,6 +174,9 @@ def resize_img(img, width):
 
 def black_and_white(img):
     return img.convert("L"), {}
+
+def blur_img(img):
+    return img.filter(ImageFilter.GaussianBlur(radius=5)), {}
 
 # ---------END CONVERSIONS------------
 
@@ -206,7 +213,7 @@ def update_defaults(quality, format):
         click.secho(msg, fg="green")
     
 
-# returns whether the extention is one of Pillow's valid extensions
+# compares format against Pillow's valid extensions
 def is_valid_format(format):
     valid_extensions = Image.registered_extensions()
     regex = r'[^a-zA-Z0-9]'
@@ -231,20 +238,25 @@ def get_size_info(old_file, new_file):
 
     return f'{old_size//1024}KB -> {new_size//1024}KB ({change}: {percent:.0%})'
 
-# returns all the suffixes for the filename
-def get_suffixes(compress, resize, grayscale):
+# returns a suffix for the filename
+def get_suffixes(compress, resize, grayscale, blur):
     suffixes = []
     if compress or resize:
         suffixes.append('small')
     if grayscale:
         suffixes.append('bw')
+    if blur:
+        suffixes.append('blur')
 
-    return '_'.join(suffixes)
+    if len(suffixes) > 2:
+        return "converted"
+    else:
+        return '_'.join(suffixes)
 # ///////////////////////////////////////////////
 
 
-# Pillow's native show function was causing running
-# into errors when used outside the project directory
+# Pillow's native show function was running into
+# errors when used outside the project directory
 def show_image(file):
     system = platform.system()
 

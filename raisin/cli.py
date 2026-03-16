@@ -40,13 +40,13 @@ def cli(ctx):
 
 @click.command()
 @click.argument('path', type=click.Path(exists=True, path_type=str), required=False)
+@click.option('--recursive', '-r', is_flag=True, help="Use to convert all image files within a directory")
 @click.option('--show', '-s', is_flag=True, help="Displays the image you input. This only accepts a single file")
 @click.option('--compress', '-c', is_flag=True, help="Compresses file and converts to a .WebP file unless another file type is specified with the -f flag.\nTo adjust the amount of compression, use the -q flag and specify a number between 10 and 95")
 @click.option('--quality', '-q', type=click.IntRange(10, 95), help="Quality of compression. Accepts values 10 through 95")
 @click.option('--resize', '-rs', type=click.IntRange(100, 2000), help="Resize the image")
 @click.option('--format', '-f', help=f"This is the file type you wish to convert to.")
 @click.option('--grayscale', '-g', is_flag=True, help="Converts image to black and white.")
-@click.option('--recursive', '-r', is_flag=True, help="Use to convert all image files within a directory")
 @click.option('--default', '-d', is_flag=True, help="Change default values")
 
 
@@ -100,7 +100,7 @@ def main(path, show, compress, quality, resize, format, grayscale, recursive, de
                 continue
 
             if file.is_file() and is_valid_format(file.suffix):
-                convert_file(file, show, compress, quality, format, resize, grayscale, output_folder)
+                convert_file(file, show, compress, quality, resize, format, grayscale, output_folder)
                 
             else:
                 click.secho(f'{file.stem} was skipped because it is not an image file', fg='yellow')
@@ -162,6 +162,7 @@ def compress_img(img, quality):
     return img, {"quality" : quality}
 
 def resize_img(img, width):
+    print("Entered resize")
     w, h = img.size
     ratio = width / w
     new_height = int(h * ratio)

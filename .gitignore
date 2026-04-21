@@ -2,5 +2,4 @@
 __pycache__/
 .venv
 raisin.egg-info/
-README.md
 build/

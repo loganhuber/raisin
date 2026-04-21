@@ -7,8 +7,6 @@ import platform
 import json
 from platformdirs import user_config_dir
 
-
-
 CONFIG_PATH = Path(user_config_dir('raisin')) / '.config.json'
 
 DEFAULTS = {
@@ -54,58 +52,19 @@ def cli(ctx):
 def main(path, show, compress, quality, resize, blur, format, grayscale, recursive, default):
     """Raisin is a CLI Tool meant to easily compress and convert image files."""
 
-    config = load_config()
-
-    if quality is None:
-        quality = config["quality"]
-
-    if format is None:
-        format = config["format"]
-
-    if default and path:
-        click.secho("Error: -d flag can't be used with path", fg='red')
-        return
-
-    if not path:
-        if default:
-            update_defaults(quality, format)
-            return
-        else:
-            click.secho("Please enter a file")
-            return
-
-    if format and not is_valid_format(format):
-        click.echo(f"{format} is not a valid image format")
+    resolved = resolve_inputs(path, quality, format, default)
+    if resolved is None:
         return
     
-    path = Path(path)
+    path, quality, format = resolved
 
-    if path.is_file(): # converts one file
+    if path.is_file(): # convert one file
         convert_file(path, show, compress, quality, resize, blur, format, grayscale)
         click.echo("Done")
 
-    if path.is_dir(): # converts each file in a folder
-        if not recursive:
-            click.secho("Error \nDirectory entered. Use '-r' flag to iterate through a folder", fg='red')
-            return 
-        
-        if show:
-            click.secho("Error: Please choose ONE file to open", fg='red')
-            return
+    if path.is_dir(): # convert each file in a folder
+        process_dir(path, show, compress, quality, resize, blur, format, grayscale, recursive)
 
-        output_folder = path.parent / f'{path.stem}-small'
-        files = path.rglob("*") if recursive else path.glob("*")
-        for file in files:
-            # prevents from converting the same file again
-            if output_folder in file.parents:
-                continue
-
-            if file.is_file() and is_valid_format(file.suffix):
-                convert_file(file, show, compress, quality, resize, blur, format, grayscale, output_folder)
-                
-            else:
-                click.secho(f'{file.stem} was skipped because it is not an image file', fg='yellow')
-        click.echo("Done")
 
 
 def convert_file(file, show, compress, quality, resize, blur, format, grayscale, output_folder=None):
@@ -121,34 +80,35 @@ def convert_file(file, show, compress, quality, resize, blur, format, grayscale,
     else:
         output_folder = file.parent
 
-    opperations = []
-
-    filename = Path(file).stem
-    img = Image.open(file)
-
+    operations = []
     save_args = {}
 
-    if compress:
-        opperations.append(('compress', lambda img: compress_img(img, quality)))
+    filename = Path(file).stem
 
-    if resize:
-        opperations.append(('resize', lambda img: resize_img(img, resize)))
+    with Image.open(file) as im:
+        img = im.copy()
 
-    if grayscale:
-        opperations.append(('grayscale', lambda img: black_and_white(img)))
+        if compress:
+            operations.append(('compress', lambda img: compress_img(img, quality)))
 
-    if blur:
-        opperations.append(('blur', lambda img: blur_img(img)))
+        if resize:
+            operations.append(('resize', lambda img: resize_img(img, resize)))
 
-    suffix = get_suffixes(compress, resize, grayscale, blur)
+        if grayscale:
+            operations.append(('grayscale', lambda img: black_and_white(img)))
 
-    new_file = output_folder / f'{filename}_{suffix}.{format}'
+        if blur:
+            operations.append(('blur', lambda img: blur_img(img)))
 
-    for name, op in opperations:
-        img, args = op(img)
-        save_args.update(args)
+        suffix = get_suffixes(compress, resize, grayscale, blur)
 
-    img.save(new_file, format=format, **save_args)
+        new_file = output_folder / f'{filename}_{suffix}.{format}'
+
+        for name, op in operations:
+            img, args = op(img)
+            save_args.update(args)
+
+        img.save(new_file, format=format, **save_args)
 
     size_info = get_size_info(file, new_file)
     messages.append((f"Saved {new_file}", 'yellow'))
@@ -180,6 +140,31 @@ def blur_img(img):
 
 # ---------END CONVERSIONS------------
 
+def process_dir(path, show, compress, quality, resize, blur, format, grayscale, recursive):
+    if not recursive:
+        click.secho("Error \nDirectory entered. Use '-r' flag to iterate through a folder", fg='red')
+        return 
+
+    if show:
+        click.secho("Error: Please choose ONE file to open", fg='red')
+        return
+
+    output_folder = path.parent / f'{path.stem}-altered'
+    files = path.rglob("*") if recursive else path.glob("*")
+    for file in files:
+        # prevents from converting the same file again
+        if output_folder in file.parents:
+            continue
+        # skip dotfiles so user doesn't get annoying msg about it
+        if file.name.startswith("."):
+            continue
+
+        if file.is_file() and is_valid_format(file.suffix):
+            convert_file(file, show, compress, quality, resize, blur, format, grayscale, output_folder)
+            
+        else:
+            click.secho(f'{file.stem} was skipped because it is not an image file', fg='yellow')
+    click.echo("Done")
 
 
 def update_defaults(quality, format):
@@ -213,15 +198,6 @@ def update_defaults(quality, format):
         click.secho(msg, fg="green")
     
 
-# compares format against Pillow's valid extensions
-def is_valid_format(format):
-    valid_extensions = Image.registered_extensions()
-    regex = r'[^a-zA-Z0-9]'
-    cleaned = re.sub(regex, '', format)
-    if f".{cleaned.lower()}" in valid_extensions:
-        return True
-    else:
-        return False
     
 
 # --------USER INFO FOR NEW FILE--------
@@ -252,8 +228,7 @@ def get_suffixes(compress, resize, grayscale, blur):
         return "converted"
     else:
         return '_'.join(suffixes)
-# ///////////////////////////////////////////////
-
+# -------------------------------------------
 
 # Pillow's native show function was running into
 # errors when used outside the project directory
@@ -270,8 +245,46 @@ def show_image(file):
     except Exception as e:
         click.secho(f"Error showing image: {e}")
 
+# ----------INPUT CHECKS----------
+def resolve_inputs(path, quality, format, default):
+    config = load_config()
+
+    if quality is None:
+        quality = config["quality"]
+
+    if format is None:
+        format = config["format"]
+
+    if default and path:
+        click.secho("Error: Default Update (-d) cannot be used with path", fg='red')
+        return None
+
+    if not path:
+        if default:
+            update_defaults(quality, format)
+            return None
+        else:
+            click.secho("Please enter a file")
+            return None
+
+    if format and not is_valid_format(format):
+        click.echo(f"{format} is not a valid image format")
+        return None
+    
+    return Path(path), quality, format
 
 
+# compares format against Pillow's valid extensions
+def is_valid_format(format):
+    valid_extensions = Image.registered_extensions()
+    regex = r'[^a-zA-Z0-9]'
+    cleaned = re.sub(regex, '', format)
+    if f".{cleaned.lower()}" in valid_extensions:
+        return True
+    else:
+        return False
+
+# ----------END INPUT CHECKS----------
 
 if __name__=='__main__':
     cli()
